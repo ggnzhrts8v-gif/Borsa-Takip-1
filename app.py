@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -7,7 +8,7 @@ from plotly.subplots import make_subplots
 st.set_page_config(page_title="Borsa Takip", layout="wide")
 st.title("📈 Borsa Takip")
 
-HISSELER = [
+YEDEK = [
     "THYAO", "ASELS", "GARAN", "AKBNK", "YKBNK", "ISCTR", "EREGL", "KCHOL",
     "SAHOL", "BIMAS", "TUPRS", "SISE", "FROTO", "TOASO", "PGSUS", "TCELL",
     "ARCLK", "PETKM", "KOZAL", "HEKTS", "SASA", "EKGYO", "ENKAI", "TAVHL",
@@ -23,12 +24,42 @@ GUN = {
 }
 
 
+@st.cache_data(ttl=86400)
+def hisse_listesi():
+    try:
+        import borsapy as bp
+        df = bp.companies()
+        kaynak = next(
+            (df[c] for c in df.columns
+             if str(c).lower() in ("ticker", "symbol", "code", "kod", "sembol")),
+            None,
+        )
+        if kaynak is None:
+            if isinstance(df.index, pd.RangeIndex):
+                kaynak = df.iloc[:, 0]
+            else:
+                kaynak = df.index.to_series()
+        kodlar = sorted({
+            str(x).strip().upper() for x in kaynak
+            if re.fullmatch(r"[A-Z0-9]{3,6}", str(x).strip().upper())
+        })
+        if len(kodlar) > 100:
+            return kodlar, "tüm BIST"
+    except Exception:
+        pass
+    return sorted(YEDEK), "yedek liste"
+
+
 @st.cache_data(ttl=900)
 def veri_al(kod):
     return yf.Ticker(kod + ".IS").history(period="max", auto_adjust=False)
 
 
-secim = st.selectbox("Hisse", HISSELER)
+HISSELER, KAYNAK = hisse_listesi()
+st.caption(f"{len(HISSELER)} hisse yüklendi ({KAYNAK})")
+
+varsayilan = HISSELER.index("THYAO") if "THYAO" in HISSELER else 0
+secim = st.selectbox("Hisse (yazarak arayabilirsin)", HISSELER, index=varsayilan)
 elle = st.text_input("Listede yoksa kodunu yaz (ör: THYAO)")
 kod = elle.strip().upper() or secim
 
