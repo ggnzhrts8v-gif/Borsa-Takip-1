@@ -55,6 +55,77 @@ def veri_al(kod):
     return yf.Ticker(kod + ".IS").history(period="max", auto_adjust=False)
 
 
+def rsi_hesapla(kapanis, periyot=14):
+    fark = kapanis.diff()
+    kazanc = fark.clip(lower=0).ewm(alpha=1 / periyot, adjust=False).mean()
+    kayip = (-fark.clip(upper=0)).ewm(alpha=1 / periyot, adjust=False).mean()
+    return 100 - 100 / (1 + kazanc / kayip)
+
+
+def yorum_uret(df):
+    kap = df["Close"].dropna()
+    if len(kap) < 60:
+        return None, ["Yorum için yeterli geçmiş veri yok."]
+    puan = 0
+    notlar = []
+    fiyat = kap.iloc[-1]
+
+    sma20 = kap.rolling(20).mean().iloc[-1]
+    sma50 = kap.rolling(50).mean().iloc[-1]
+
+    if fiyat > sma50:
+        puan += 1
+        notlar.append(f"Fiyat 50 günlük ortalamanın ({sma50:.2f}) üstünde → olumlu")
+    else:
+        puan -= 1
+        notlar.append(f"Fiyat 50 günlük ortalamanın ({sma50:.2f}) altında → olumsuz")
+
+    if sma20 > sma50:
+        puan += 1
+        notlar.append("20 günlük ortalama 50 günlüğün üstünde → olumlu")
+    else:
+        puan -= 1
+        notlar.append("20 günlük ortalama 50 günlüğün altında → olumsuz")
+
+    if len(kap) >= 200:
+        sma200 = kap.rolling(200).mean().iloc[-1]
+        if fiyat > sma200:
+            puan += 1
+            notlar.append(f"Fiyat 200 günlük ortalamanın ({sma200:.2f}) üstünde → olumlu")
+        else:
+            puan -= 1
+            notlar.append(f"Fiyat 200 günlük ortalamanın ({sma200:.2f}) altında → olumsuz")
+
+    rsi = rsi_hesapla(kap).iloc[-1]
+    if pd.notna(rsi):
+        if rsi >= 70:
+            puan -= 1
+            notlar.append(f"RSI {rsi:.0f}: aşırı alım bölgesi, geri çekilme riski → olumsuz")
+        elif rsi <= 30:
+            puan += 1
+            notlar.append(f"RSI {rsi:.0f}: aşırı satım bölgesi, tepki gelebilir → olumlu")
+        else:
+            notlar.append(f"RSI {rsi:.0f}: nötr bölge")
+
+    ay = (fiyat / kap.iloc[-22] - 1) * 100
+    if ay > 5:
+        puan += 1
+        notlar.append(f"Son 1 ayda %{ay:+.1f} → olumlu")
+    elif ay < -5:
+        puan -= 1
+        notlar.append(f"Son 1 ayda %{ay:+.1f} → olumsuz")
+    else:
+        notlar.append(f"Son 1 ayda %{ay:+.1f}: yatay")
+
+    hac = df["Volume"]
+    h5 = hac.tail(5).mean()
+    h20 = hac.tail(20).mean()
+    if h20 > 0 and h5 > 1.5 * h20:
+        notlar.append("Son 5 günde hacim 20 günlük ortalamanın %50'den fazla üstünde → hareket güçlü")
+
+    return puan, notlar
+
+
 HISSELER, KAYNAK = hisse_listesi()
 st.caption(f"{len(HISSELER)} hisse yüklendi ({KAYNAK})")
 
@@ -79,6 +150,24 @@ c1, c2, c3 = st.columns(3)
 c1.metric("Son fiyat", f"{son['Close']:.2f} TL", f"{degisim:+.2f}%")
 c2.metric("Hacim", f"{int(son['Volume']):,}")
 c3.metric("1 yıl en yüksek", f"{tum['High'].tail(252).max():.2f} TL")
+
+st.subheader("Teknik yorum")
+puan, notlar = yorum_uret(tum)
+if puan is None:
+    st.info(notlar[0])
+else:
+    if puan >= 2:
+        st.success(f"📈 Yükseliş eğilimi (puan {puan:+d})")
+    elif puan <= -2:
+        st.error(f"📉 Düşüş eğilimi (puan {puan:+d})")
+    else:
+        st.warning(f"➖ Belirsiz / yatay (puan {puan:+d})")
+    for n in notlar:
+        st.write("• " + n)
+st.caption(
+    "Otomatik teknik analizdir, yatırım tavsiyesi değildir. "
+    "Geçmiş verilere dayanır, geleceği garanti etmez."
+)
 
 d = tum[tum.index >= tum.index.max() - pd.Timedelta(days=GUN[sure])]
 if mum != "Günlük":
